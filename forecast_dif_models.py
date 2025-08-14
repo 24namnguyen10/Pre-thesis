@@ -121,7 +121,7 @@ class FinRLMultiModelTester:
             print(f"Error downloading data: {e}")
             print("Creating synthetic future data...")
             return self._create_dummy_data()
-    
+            
     def _create_dummy_data(self):
         """Simulate future stock price data using geometric Brownian motion."""
         print("🧪 Simulating future price paths...")
@@ -430,7 +430,11 @@ class FinRLMultiModelTester:
         
         return df_account_value, df_actions
     
-    def plot_results(self, df_account_value, df_actions=None, show_actions=True):
+    def plot_results(self, df_account_value, df_actions=None, show_actions=True, save_dir = "forecast_results"):
+
+        import os
+        os.makedirs(save_dir, exist_ok=True)
+
         """Plot portfolio value and optionally trading actions."""
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
@@ -486,7 +490,7 @@ class FinRLMultiModelTester:
         plt.xticks(rotation=45)
 
         plt.tight_layout()
-        filename = f"{self.model_type.lower()}_trading_result.png"
+        filename = os.path.join(save_dir, f"{self.model_type.lower()}_trading_result.png")
         plt.savefig(filename)
         print(f"Plot saved as {filename}")
         plt.show()
@@ -509,7 +513,8 @@ class FinRLMultiModelTester:
         print(f"FinRL Available: {FINRL_AVAILABLE}")
         
         # Step 1: Download data
-        self.download_data()
+        if self.df is None or self.df.empty:
+            self.download_data()
         
         # Step 2: Add technical indicators
         self.add_technical_indicators()
@@ -521,7 +526,7 @@ class FinRLMultiModelTester:
         df_account_value, df_actions = self.test_model()
         
         # Step 5: Plot results
-        self.plot_results(df_account_value, df_actions)
+        self.plot_results(df_account_value, df_actions, save_dir="forecast_results")
 
         return df_account_value, df_actions
 
@@ -543,70 +548,55 @@ class DummyModel:
         
         return action, None
 
-
-def compare_models(model_configs, start_date='2025-01-01', end_date='2026-12-31', initial_amount=1000000):
-    """Compare performance of multiple models."""
+def compare_models(results_data):
+    """
+    Compare performance of multiple models from already available results.
+    
+    Args:
+        results_data (dict): {
+            'PPO': df_account_value_PPO,
+            'A2C': df_account_value_A2C,
+            ...
+        }
+    """
     results = {}
-    
-    print("=== Multi-Model Comparison ===")
-    
-    for model_type, model_path in model_configs.items():
-        print(f"\n--- Testing {model_type} ---")
-        
-        try:
-            tester = FinRLMultiModelTester(
-                model_path=model_path,
-                model_type=model_type,
-                start_date=start_date,
-                end_date=end_date,
-                initial_amount=initial_amount
-            )
-            
-            df_account_value, df_actions = tester.run_test()
-            
-            # Calculate performance metrics
-            total_return = (df_account_value['account_value'].iloc[-1] / 
-                          df_account_value['account_value'].iloc[0] - 1) * 100
-            
+
+    print("\n=== Model Comparison Summary ===")
+    print(f"{'Model':<8} {'Total Return':<15} {'Volatility':<12} {'Sharpe':<8} {'Final Value':<15}")
+    print("-" * 70)
+
+    for model_type, df_account_value in results_data.items():
+        if df_account_value is not None and not df_account_value.empty:
+            total_return = (df_account_value['account_value'].iloc[-1] /
+                            df_account_value['account_value'].iloc[0] - 1) * 100
+
             daily_returns = df_account_value['account_value'].pct_change().dropna()
             volatility = daily_returns.std()
             sharpe_ratio = daily_returns.mean() / volatility * np.sqrt(252) if volatility > 0 else 0
-            
+            final_value = df_account_value['account_value'].iloc[-1]
+
             results[model_type] = {
                 'total_return': total_return,
                 'volatility': volatility,
                 'sharpe_ratio': sharpe_ratio,
-                'final_value': df_account_value['account_value'].iloc[-1]
+                'final_value': final_value
             }
-            
-        except Exception as e:
-            print(f"Error testing {model_type}: {e}")
-            results[model_type] = None
-    
-    # Print comparison summary
-    print("\n=== Model Comparison Summary ===")
-    print(f"{'Model':<8} {'Total Return':<15} {'Volatility':<12} {'Sharpe':<8} {'Final Value':<15}")
-    print("-" * 70)
-    
-    for model_type, metrics in results.items():
-        if metrics:
-            print(f"{model_type:<8} {metrics['total_return']:<14.2f}% {metrics['volatility']:<11.4f} "
-                  f"{metrics['sharpe_ratio']:<7.2f} ${metrics['final_value']:<14,.0f}")
+
+            print(f"{model_type:<8} {total_return:<14.2f}% {volatility:<11.4f} "
+                  f"{sharpe_ratio:<7.2f} ${final_value:<14,.0f}")
         else:
             print(f"{model_type:<8} {'Failed':<14} {'N/A':<11} {'N/A':<7} {'N/A':<15}")
-    
-    return results
+            results[model_type] = None
 
+    return results
 
 def main():
     """Main function to run the test."""
     print("FinRL Multi-Model Stock Trading Forecaster")
     print("=" * 50)
-    
-    # Example 1: Test single model
-    print("\n1. Testing single model (PPO):")
+
+    # Initial tester just to download data once
     model_path = "trained_models/trained_ppo_model.zip"
-    
     tester = FinRLMultiModelTester(
         model_path=model_path,
         model_type='PPO',
@@ -614,35 +604,35 @@ def main():
         end_date='2026-12-31',
         initial_amount=1000000
     )
-    
-    df_account_value, df_actions = tester.run_test()
-    
-    # Example 2: Compare multiple models
-    print("\n2. Comparing multiple models:")
-    model_configs = {
-        'PPO': 'trained_models/trained_ppo_model.zip',
-        'A2C': 'trained_models/trained_a2c_model.zip',
-        'DDPG': 'trained_models/trained_ddpg_model.zip',
-        'SAC': 'trained_models/trained_sac_model.zip',
-        'TD3': 'trained_models/trained_td3_model.zip'
-    }
-    
-    comparison_results = compare_models(model_configs)
-    
-    print("\nTest completed successfully!")
-    
-    print("\nUsage Instructions:")
-    print("1. Replace model paths with actual trained model files")
-    print("2. Adjust date ranges and parameters as needed")
-    print("3. For real trading, ensure models are properly trained on relevant data")
-    print("4. Consider transaction costs and market conditions")
-    
-    if not FINRL_AVAILABLE:
-        print("\nTo run with real FinRL:")
-        print("1. pip install finrl")
-        print("2. pip install stable-baselines3[extra]")
-        print("3. Ensure you have trained models for each algorithm")
+    tester.download_data()  # Download only once
 
+    model_paths = {
+        "PPO": "trained_models/trained_ppo_model.zip",
+        "A2C": "trained_models/trained_a2c_model.zip",
+        "DDPG": "trained_models/trained_ddpg_model.zip",
+        "SAC": "trained_models/trained_sac_model.zip",
+        "TD3": "trained_models/trained_td3_model.zip"
+    }
+
+    model_results = {}
+
+    # Run each model once, store results
+    for model_type, path in model_paths.items():
+        print(f"\n--- Running {model_type} ---")
+        tester.model_path = path
+        tester.model_type = model_type
+        tester.add_technical_indicators()
+        tester.load_model()
+        df_account_value, df_actions = tester.test_model()
+        tester.plot_results(df_account_value, df_actions, save_dir="forecast_results")
+
+        model_results[model_type] = df_account_value
+
+    # Compare multiple models without re-running
+    print("\n2. Comparing multiple models:")
+    comparison_results = compare_models(model_results)
+
+    print("\nTest completed successfully!")
 
 if __name__ == "__main__":
     main()
